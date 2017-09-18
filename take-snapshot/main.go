@@ -9,21 +9,23 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2"
 )
 
+var region = "eu-west-1"
 var env = "test"
-var services = []string{
-	"charge-drive-mongodb",
-	"gireve-emp-mongodb",
-	"share-charge-adapter-mongodb",
-	"smarthome-mongodb",
-	"stripe-payment-service-mongodb",
+var services = []*string{
+	aws.String("charge-drive-mongodb"),
+	aws.String("gireve-emp-mongodb"),
+	aws.String("share-charge-adapter-mongodb"),
+	aws.String("smarthome-mongodb"),
+	aws.String("stripe-payment-service-mongodb"),
 }
 
 func main() {
-	session, err := session.NewSession(&aws.Config{Region: aws.String("eu-west-1")})
+	session, err := session.NewSession(&aws.Config{Region: &region})
 	if err != nil {
 		fmt.Println(err)
 	}
 	svc := ec2.New(session)
+
 	// get volumes
 	dvInput := ec2.DescribeVolumesInput{
 		Filters: []*ec2.Filter{
@@ -31,48 +33,46 @@ func main() {
 				Name:   aws.String("tag:Env"),
 				Values: []*string{aws.String(env)},
 			},
+			{
+				Name:   aws.String("tag:Service"),
+				Values: services,
+			},
 		}}
 	dvOutput, err := svc.DescribeVolumes(&dvInput)
 	if err != nil {
 		fmt.Println(err)
 	}
-	// fmt.Println(dvOutput.Volumes)
+	// fmt.Println(len(dvOutput.Volumes))
 
 	// take snapshot for volumes
 	for _, volume := range dvOutput.Volumes[:] {
-		isTarget := false
-		// get tags from volume
+		// exclude tags with tag:Key "^aws:"
 		tags := []*ec2.Tag{}
 		for _, tag := range volume.Tags {
-			for _, service := range services {
-				if *tag.Value == service {
-					fmt.Println("# " + env + ": " + service)
-					isTarget = true
-				}
-			}
-			if match, _ := regexp.MatchString("aws:.*", *tag.Key); !match {
+			if match, _ := regexp.MatchString("^aws:.*", *tag.Key); !match {
 				tags = append(tags, tag)
 			}
+			if *tag.Key == "Name" {
+				fmt.Println("# " + *tag.Value)
+			}
 		}
-
 		// fmt.Println(tags)
 
-		if isTarget {
-			// take snapshot
-			fmt.Println(*volume.VolumeId)
-			csInput := ec2.CreateSnapshotInput{VolumeId: volume.VolumeId}
-			csOutput, err := svc.CreateSnapshot(&csInput)
-			if err != nil {
-				fmt.Println(err)
-			}
-			fmt.Println(*csOutput.SnapshotId)
-
-			// tag snapshot
-			ctInput := ec2.CreateTagsInput{Resources: []*string{csOutput.SnapshotId}, Tags: tags}
-			_, err = svc.CreateTags(&ctInput)
-			if err != nil {
-				fmt.Println(err)
-			}
+		// take snapshot
+		fmt.Println(*volume.VolumeId)
+		csInput := ec2.CreateSnapshotInput{VolumeId: volume.VolumeId}
+		csOutput, err := svc.CreateSnapshot(&csInput)
+		if err != nil {
+			fmt.Println(err)
 		}
+		fmt.Println(*csOutput.SnapshotId)
+
+		// tag snapshot
+		ctInput := ec2.CreateTagsInput{Resources: []*string{csOutput.SnapshotId}, Tags: tags}
+		_, err = svc.CreateTags(&ctInput)
+		if err != nil {
+			fmt.Println(err)
+		}
+
 	}
 }
